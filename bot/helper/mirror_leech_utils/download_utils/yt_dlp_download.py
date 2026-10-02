@@ -11,7 +11,6 @@ from ...ext_utils.task_manager import (
     stop_duplicate_check,
     limit_checker,
 )
-from ...ext_utils.links_utils import is_youtube_link
 from ...mirror_leech_utils.status_utils.queue_status import QueueStatus
 from ...telegram_helper.message_utils import send_status_message
 from ..status_utils.yt_dlp_status import YtDlpStatus

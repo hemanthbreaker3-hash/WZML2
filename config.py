@@ -174,6 +174,6 @@ WEB_ACCESS_PASSWORD = ""
 WEB_PINCODE = True
 YT_DLP_OPTIONS = {}
 YT_DESP = "Uploaded with HTR-X bot"
-YT_TAGS = ["telegram", "bot", "youtube"]
+YT_TAGS = ["telegram", "bot"]
 YT_CATEGORY_ID = 22
 YT_PRIVACY_STATUS = "unlisted"

@@ -19,9 +19,6 @@ CREDENTIALS_FILE = "../config/credentials.json"
 TOKEN_FILE = "../tokens/token.pickle"
 SCOPES = [
     "https://www.googleapis.com/auth/drive",
-    "https://www.googleapis.com/auth/youtube.upload",
-    "https://www.googleapis.com/auth/youtube.readonly",
-    "https://www.googleapis.com/auth/youtube.force-ssl",
 ]
 
 

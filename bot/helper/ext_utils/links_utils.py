@@ -20,17 +20,6 @@ def is_url(url: str):
     )
 
 
-def is_youtube_link(url: str) -> bool:
-    if not url or not isinstance(url, str):
-        return False
-    return bool(
-        re_match(
-            r"^(https?://)?(www\.|m\.|music\.)?(youtube\.com/(watch\?|shorts/|playlist\?|embed/|v/|live/|channel/|c/|@[^/]+)|youtu\.be/[a-zA-Z0-9_-]+).*",
-            url,
-        )
-    )
-
-
 def is_gdrive_link(url: str):
     return "drive.google.com" in url or "drive.usercontent.google.com" in url
 

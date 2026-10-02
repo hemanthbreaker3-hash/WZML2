@@ -17,7 +17,7 @@ yt = """<b>Send a link along with command options:</b>
 
 <code>/cmd -n "New Name" -z password -opt x:y|x1:y1</code>
 
-<blockquote>Check all supported <a href='https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md'>sites</a> or explore yt-dlp options in <a href='https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/YoutubeDL.py#L212'>YoutubeDL.py</a>.</blockquote>"""
+<blockquote>Check all supported <a href='https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md'>sites</a> for yt-dlp downloads.</blockquote>"""
 
 clone = """<b>Clone Google Drive or Rclone path:</b>
 
@@ -338,11 +338,11 @@ def get_bot_commands():
     static_commands = {
         "Mirror": "[link/file] Mirror task to cloud destination",
         "QbMirror": "[magnet/torrent] Mirror using qBittorrent",
-        "Ytdl": "[link] Mirror YouTube and supported websites",
+        "Ytdl": "[link] Mirror supported websites",
         "UpHoster": "[link/file] Upload to DDL hosters",
         "Leech": "[link/file] Leech task to Telegram",
         "QbLeech": "[magnet/torrent] Leech using qBittorrent",
-        "YtdlLeech": "[link] Leech YouTube and supported websites",
+        "YtdlLeech": "[link] Leech supported websites",
         "Clone": "[link] Copy files/folders to Google Drive or Rclone",
         "UserSet": "Manage personal user settings",
         "ForceStart": "[gid/reply] Force start queued task",

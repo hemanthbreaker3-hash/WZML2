@@ -17,7 +17,7 @@ from ..helper.ext_utils.bot_utils import (
     new_task,
     sync_to_async,
 )
-from ..helper.ext_utils.links_utils import is_url, is_youtube_link
+from ..helper.ext_utils.links_utils import is_url
 from ..helper.ext_utils.task_manager import pre_task_check
 from ..helper.ext_utils.status_utils import get_readable_file_size, get_readable_time
 from ..helper.listeners.task_listener import TaskListener

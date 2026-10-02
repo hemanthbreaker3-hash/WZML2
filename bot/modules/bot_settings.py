@@ -174,7 +174,7 @@ DEFAULT_DESP = {
     "DISABLE_RSS": "Disable RSS feed monitoring. Default: False.",
     "DISABLE_SEARCH": "Disable torrent search plugins. Default: False.",
     "DISABLE_STREAM": "Disable streaming. Default: False.",
-    "DISABLE_YTDLP": "Disable YouTube/YT-DLP downloads. Default: False.",
+    "DISABLE_YTDLP": "Disable YT-DLP downloads. Default: False.",
     "ENABLE_ENCODE": "Enable or disable global FFmpeg video encoding pipeline.",
     "ENABLE_COMPRESS": "Enable or disable global FFmpeg video compression pipeline.",
     "ENABLE_WATERMARK": "Enable or disable global FFmpeg watermark processing.",
