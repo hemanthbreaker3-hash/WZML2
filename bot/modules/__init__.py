@@ -58,10 +58,13 @@ from .users_settings import (
 )
 from .addbot import add_bot_command, add_bot_cb
 from .request_ff import request_ff, reqff_callback
+from .taskm import taskm_handler, taskm_callback
 from .ytdlp import ytdl, ytdl_leech
 from ..helper.ext_utils.track_manager import tm_callback
 
 __all__ = [
+    "taskm_handler",
+    "taskm_callback",
     "tm_callback",
     "memory_stats",
     "memory_callback",
