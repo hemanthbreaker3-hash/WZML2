@@ -298,7 +298,7 @@ def setup_js_runtimes(opts):
     log_ytdlp_startup_info()
     if "js_runtimes" not in opts:
         js_runtimes = {}
-        for rt in ("node", "deno", "bun"):
+        for rt in ("deno", "node", "bun"):
             if path := shutil.which(rt):
                 js_runtimes[rt] = {"path": path}
         if js_runtimes:

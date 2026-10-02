@@ -17,7 +17,7 @@ def test_setup_js_runtimes(monkeypatch):
     assert "js_runtimes" in opts
     assert "node" in opts["js_runtimes"]
     assert opts["js_runtimes"]["node"]["path"] == "/usr/bin/node"
-    assert list(opts["js_runtimes"].keys())[0] == "node"
+    assert list(opts["js_runtimes"].keys())[0] == "deno"
 
 
 def test_is_youtube_link():

@@ -101,6 +101,13 @@ class YoutubeDLHelper:
         self.opts["extractor_args"]["youtube"] = {
             "player_client": ["default", "web_embedded", "web_safari", "-tv_downgraded"]
         }
+        import shutil
+        js_runtimes = {}
+        for rt in ("deno", "node", "bun"):
+            if path := shutil.which(rt):
+                js_runtimes[rt] = {"path": path}
+        if js_runtimes:
+            self.opts["js_runtimes"] = js_runtimes
         if ospath.exists(ospath.expanduser("~/.netrc")):
             self.opts["usenetrc"] = True
 
