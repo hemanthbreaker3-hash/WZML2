@@ -56,6 +56,7 @@ from .users_settings import (
     edit_user_settings,
     send_user_settings,
 )
+from .ytdlp import ytdl, ytdl_leech
 from .addbot import add_bot_command, add_bot_cb
 from .request_ff import request_ff, reqff_callback
 from .taskm import taskm_command, taskm_callback, taskuser_command, taskuser_callback
@@ -108,6 +109,8 @@ __all__ = [
     "nzb_leech",
     "nzb_mirror",
     "seedr_link",
+    "ytdl",
+    "ytdl_leech",
     "restart_bot",
     "restart_notification",
     "confirm_restart",

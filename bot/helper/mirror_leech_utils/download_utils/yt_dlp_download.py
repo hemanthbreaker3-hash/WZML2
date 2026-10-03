@@ -1,17 +1,18 @@
 from logging import getLogger
 from os import path as ospath, listdir
 from re import search as re_search
+from contextlib import suppress
 from secrets import token_hex
 from yt_dlp import YoutubeDL, DownloadError
 
 from .... import task_dict_lock, task_dict
+from ....core.config_manager import BinConfig
 from ...ext_utils.bot_utils import sync_to_async, async_to_sync
 from ...ext_utils.task_manager import (
     check_running_tasks,
     stop_duplicate_check,
     limit_checker,
 )
-from ...ext_utils.links_utils import is_youtube_link
 from ...mirror_leech_utils.status_utils.queue_status import QueueStatus
 from ...telegram_helper.message_utils import send_status_message
 from ..status_utils.yt_dlp_status import YtDlpStatus
@@ -19,36 +20,31 @@ from ..status_utils.yt_dlp_status import YtDlpStatus
 LOGGER = getLogger(__name__)
 
 
-def get_cookie_file(user_dict=None, user_id=0):
+def get_cookie_file(user_dict=None):
     user_dict = user_dict or {}
     if not user_dict.get("USE_DEFAULT_COOKIE", False):
         usr_cookie = user_dict.get("USER_COOKIE_FILE", "")
         if usr_cookie and ospath.exists(usr_cookie):
-            return usr_cookie, None
-        if user_id:
-            user_cookie_path = f"cookies/{user_id}/cookies.txt"
-            if ospath.exists(user_cookie_path):
-                return user_cookie_path, None
+            return usr_cookie
     if ospath.exists("cookies.txt"):
-        return "cookies.txt", None
-    return None, None
+        return "cookies.txt"
+    return None
 
 
 class MyLogger:
     def __init__(self, obj, listener):
-        self.obj = obj
+        self._obj = obj
         self._listener = listener
 
     def debug(self, msg):
         # Hack to fix changing extension
-        if not self.obj.is_playlist:
+        if not self._obj.is_playlist:
             if match := re_search(
                 r".Merger..Merging formats into..(.*?).$", msg
             ) or re_search(r".ExtractAudio..Destination..(.*?)$", msg):
                 LOGGER.info(msg)
                 newname = match.group(1)
                 newname = newname.rsplit("/", 1)[-1]
-                self.obj.name = newname
                 self._listener.name = newname
 
     @staticmethod
@@ -64,22 +60,20 @@ class MyLogger:
 class YoutubeDLHelper:
     def __init__(self, listener):
         self._last_downloaded = 0
-        self._size = 0
         self._progress = 0
         self._downloaded_bytes = 0
         self._download_speed = 0
         self._eta = "-"
         self._listener = listener
         self._gid = ""
-        self._is_cancelled = False
-        self._downloading = False
         self._ext = ""
-        self.name = ""
         self.is_playlist = False
+        self.keep_thumb = False
         self.playlist_count = 0
         self.opts = {
             "progress_hooks": [self._on_download_progress],
             "logger": MyLogger(self, self._listener),
+            "usenetrc": True,
             "allow_multiple_video_streams": True,
             "allow_multiple_audio_streams": True,
             "noprogress": True,
@@ -87,6 +81,7 @@ class YoutubeDLHelper:
             "overwrites": True,
             "writethumbnail": True,
             "trim_file_name": 220,
+            "ffmpeg_location": f"/bin/{BinConfig.FFMPEG_NAME}",
             "fragment_retries": 10,
             "retries": 10,
             "retry_sleep_functions": {
@@ -96,13 +91,12 @@ class YoutubeDLHelper:
                 "extractor": lambda n: 3,
             },
         }
-        if "extractor_args" not in self.opts:
-            self.opts["extractor_args"] = {}
-        self.opts["extractor_args"]["youtube"] = {
-            "player_client": ["default", "web_embedded", "web_safari", "-tv_downgraded"]
-        }
-        if ospath.exists(ospath.expanduser("~/.netrc")):
-            self.opts["usenetrc"] = True
+        cookie_to_use = get_cookie_file(self._listener.user_dict)
+        if cookie_to_use:
+            self.opts["cookiefile"] = cookie_to_use
+            LOGGER.info(
+                f"Using cookies.txt file: {cookie_to_use} | User ID : {self._listener.user_id}"
+            )
 
     @property
     def download_speed(self):
@@ -114,7 +108,7 @@ class YoutubeDLHelper:
 
     @property
     def size(self):
-        return self._size
+        return self._listener.size
 
     @property
     def progress(self):
@@ -125,31 +119,28 @@ class YoutubeDLHelper:
         return self._eta
 
     def _on_download_progress(self, d):
-        self._downloading = True
-        if self._is_cancelled or self._listener.is_cancelled:
+        if self._listener.is_cancelled:
             raise ValueError("Cancelling...")
         if d["status"] == "finished":
             if self.is_playlist:
                 self._last_downloaded = 0
         elif d["status"] == "downloading":
-            self._download_speed = d.get("speed") or 0
+            self._download_speed = d["speed"] or 0
             if self.is_playlist:
-                downloadedBytes = d.get("downloaded_bytes") or 0
+                downloadedBytes = d["downloaded_bytes"] or 0
                 chunk_size = downloadedBytes - self._last_downloaded
                 self._last_downloaded = downloadedBytes
                 self._downloaded_bytes += chunk_size
             else:
                 if d.get("total_bytes"):
-                    self._size = d["total_bytes"]
-                    self._listener.size = d["total_bytes"]
+                    self._listener.size = d["total_bytes"] or 0
                 elif d.get("total_bytes_estimate"):
-                    self._size = d["total_bytes_estimate"]
-                    self._listener.size = d["total_bytes_estimate"]
-                self._downloaded_bytes = d.get("downloaded_bytes") or 0
+                    self._listener.size = d["total_bytes_estimate"] or 0
+                self._downloaded_bytes = d["downloaded_bytes"] or 0
                 self._eta = d.get("eta", "-") or "-"
             try:
-                self._progress = (self._downloaded_bytes / self._size) * 100
-            except Exception:
+                self._progress = (self._downloaded_bytes / self._listener.size) * 100
+            except ZeroDivisionError:
                 pass
 
     async def _on_download_start(self, from_queue=False):
@@ -161,70 +152,61 @@ class YoutubeDLHelper:
                 await send_status_message(self._listener.message)
 
     def _on_download_error(self, error):
-        self._is_cancelled = True
         self._listener.is_cancelled = True
         async_to_sync(self._listener.on_download_error, error)
 
-    def extract_meta_data(self, link, name):
-        opts = dict(self.opts)
-
-        if link.startswith(("rtmp", "mms", "rstp", "rtmps")):
-            opts["external_downloader"] = "ffmpeg"
-
-        result = None
-        try:
-            with YoutubeDL(opts) as ydl:
-                result = ydl.extract_info(link, download=False)
+    def _extract_meta_data(self):
+        with YoutubeDL(self.opts) as ydl:
+            try:
+                result = ydl.extract_info(self._listener.link, download=False)
                 if result is None:
                     raise ValueError("Info result is None")
-        except Exception as e:
-            return self._on_download_error(str(e))
-        if self.is_playlist:
-            self.playlist_count = result.get("playlist_count", 0)
-        if "entries" in result:
-            self.name = name
-            for entry in result["entries"]:
-                if not entry:
-                    continue
-                elif "filesize_approx" in entry:
-                    self._size += entry.get("filesize_approx") or 0
-                elif "filesize" in entry:
-                    self._size += entry.get("filesize") or 0
-                if not self.name:
-                    outtmpl_ = "%(series,playlist_title,channel)s%(season_number& |)s%(season_number&S|)s%(season_number|)02d.%(ext)s"
-                    self.name, ext = ospath.splitext(
-                        ydl.prepare_filename(entry, outtmpl=outtmpl_)
-                    )
-                    if not self._ext:
-                        self._ext = ext
-            self._listener.name = self.name
-            self._listener.size = self._size
-        else:
-            outtmpl_ = "%(title,fulltitle,alt_title)s%(season_number& |)s%(season_number&S|)s%(season_number|)02d%(episode_number&E|)s%(episode_number|)02d%(height& |)s%(height|)s%(height&p|)s%(fps|)s%(fps&fps|)s%(tbr& |)s%(tbr|)d.%(ext)s"
-            realName = ydl.prepare_filename(result, outtmpl=outtmpl_)
-            ext = ospath.splitext(realName)[-1]
-            self.name = f"{name}{ext}" if name else realName
-            if not self._ext:
-                self._ext = ext
-            if result.get("filesize"):
-                self._size = result["filesize"]
-            elif result.get("filesize_approx"):
-                self._size = result["filesize_approx"]
-            self._listener.name = self.name
-            self._listener.size = self._size
+            except Exception as e:
+                return self._on_download_error(str(e))
+            if self.is_playlist:
+                self.playlist_count = result.get("playlist_count", 0)
+            if "entries" in result:
+                for entry in result["entries"]:
+                    if not entry:
+                        continue
+                    if entry.get("ext") == "unknown_video":
+                        entry["ext"] = "mp4"
+                    if "filesize_approx" in entry:
+                        self._listener.size += entry.get("filesize_approx", 0) or 0
+                    elif "filesize" in entry:
+                        self._listener.size += entry.get("filesize", 0) or 0
+                    if not self._listener.name:
+                        outtmpl_ = "%(series,playlist_title,channel)s%(season_number& |)s%(season_number&S|)s%(season_number|)02d.%(ext)s"
+                        self._listener.name, ext = ospath.splitext(
+                            ydl.prepare_filename(entry, outtmpl=outtmpl_)
+                        )
+                        if not self._ext:
+                            self._ext = ext
+            else:
+                if result.get("ext") == "unknown_video":
+                    result["ext"] = "mp4"
+                if "filesize_approx" in result:
+                    self._listener.size = result.get("filesize_approx", 0) or 0
+                elif "filesize" in result:
+                    self._listener.size = result.get("filesize", 0) or 0
+                outtmpl_ = "%(title,fulltitle,alt_title)s%(season_number& |)s%(season_number&S|)s%(season_number|)02d%(episode_number&E|)s%(episode_number|)02d%(height& |)s%(height|)s%(height&p|)s%(fps|)s%(fps&fps|)s%(tbr& |)s%(tbr|)d.%(ext)s"
+                realName = ydl.prepare_filename(result, outtmpl=outtmpl_)
+                ext = ospath.splitext(realName)[-1]
+                self._listener.name = (
+                    f"{self._listener.name}{ext}" if self._listener.name else realName
+                )
+                if not self._ext:
+                    self._ext = ext
 
-
-    def _download(self, link, path):
-        opts = dict(self.opts)
-
+    def _download(self, path):
         try:
-            try:
-                with YoutubeDL(opts) as ydl:
-                    ydl.download([link])
-            except DownloadError as e:
-                if not self._is_cancelled and not self._listener.is_cancelled:
-                    self._on_download_error(str(e))
-                return
+            with YoutubeDL(self.opts) as ydl:
+                try:
+                    ydl.download([self._listener.link])
+                except DownloadError as e:
+                    if not self._listener.is_cancelled:
+                        self._on_download_error(str(e))
+                    return
             if self.is_playlist and (
                 not ospath.exists(path) or len(listdir(path)) == 0
             ):
@@ -232,18 +214,21 @@ class YoutubeDLHelper:
                     "No video available to download from this playlist. Check logs for more details"
                 )
                 return
-            if self._is_cancelled or self._listener.is_cancelled:
-                raise ValueError
+            if self._listener.is_cancelled:
+                return
             async_to_sync(self._listener.on_download_complete)
-        except ValueError:
-            self._on_download_error("Download Stopped by User!")
+        except Exception as e:
+            if not self._listener.is_cancelled:
+                self._on_download_error(str(e))
+        return
 
-    async def add_download(self, link, path, name, qual, playlist, options):
+    async def add_download(self, path, qual, playlist, options):
         if playlist:
             self.opts["ignoreerrors"] = True
             self.is_playlist = True
 
         self._gid = token_hex(5)
+
         await self._on_download_start()
 
         self.opts["postprocessors"] = [
@@ -274,59 +259,68 @@ class YoutubeDLHelper:
             else:
                 self._ext = f".{audio_format}"
 
-        self.opts["format"] = qual
+        if not self._listener.is_leech or getattr(self._listener, "thumbnail_layout", None):
+            self.opts["writethumbnail"] = False
 
         if options:
             self._set_options(options)
 
-        await sync_to_async(self.extract_meta_data, link, name)
-        if self._is_cancelled or self._listener.is_cancelled:
+        self.opts["format"] = qual
+
+        await sync_to_async(self._extract_meta_data)
+        if self._listener.is_cancelled:
             return
 
-        base_name, ext = ospath.splitext(self.name)
-        trim_name = self.name if self.is_playlist else base_name
+        base_name, ext = ospath.splitext(self._listener.name)
+        trim_name = self._listener.name if self.is_playlist else base_name
         if len(trim_name.encode()) > 200:
-            self.name = (
-                self.name[:200] if self.is_playlist else f"{base_name[:200]}{ext}"
+            self._listener.name = (
+                self._listener.name[:200]
+                if self.is_playlist
+                else f"{base_name[:200]}{ext}"
             )
-            base_name = ospath.splitext(self.name)[0]
-            self._listener.name = self.name
+            base_name = ospath.splitext(self._listener.name)[0]
 
-        start_path = f"{path}/yt-dlp-thumb"
+        start_path = path if self.keep_thumb else f"{path}/yt-dlp-thumb"
+        opts_check = options or {}
         if self.is_playlist:
             self.opts["outtmpl"] = {
-                "default": f"{path}/{self.name}/%(title,fulltitle,alt_title)s%(season_number& |)s%(season_number&S|)s%(season_number|)02d%(episode_number&E|)s%(episode_number|)02d%(height& |)s%(height|)s%(height&p|)s%(fps|)s%(fps&fps|)s%(tbr& |)s%(tbr|)d.%(ext)s",
+                "default": f"{path}/{self._listener.name}/%(title,fulltitle,alt_title)s%(season_number& |)s%(season_number&S|)s%(season_number|)02d%(episode_number&E|)s%(episode_number|)02d%(height& |)s%(height|)s%(height&p|)s%(fps|)s%(fps&fps|)s%(tbr& |)s%(tbr|)d.%(ext)s",
                 "thumbnail": f"{start_path}/%(title,fulltitle,alt_title)s%(season_number& |)s%(season_number&S|)s%(season_number|)02d%(episode_number&E|)s%(episode_number|)02d%(height& |)s%(height|)s%(height&p|)s%(fps|)s%(fps&fps|)s%(tbr& |)s%(tbr|)d.%(ext)s",
             }
+        elif "download_ranges" in opts_check:
+            self.opts["outtmpl"] = {
+                "default": f"{path}/{base_name}/%(section_number|)s%(section_number&.|)s%(section_title|)s%(section_title&-|)s%(title,fulltitle,alt_title)s %(section_start)s to %(section_end)s.%(ext)s",
+                "thumbnail": f"{start_path}/%(section_number|)s%(section_number&.|)s%(section_title|)s%(section_title&-|)s%(title,fulltitle,alt_title)s %(section_start)s to %(section_end)s.%(ext)s",
+            }
         elif any(
-            key in (options if isinstance(options, dict) else {})
+            key in opts_check
             for key in [
                 "writedescription",
                 "writeinfojson",
                 "writeannotations",
                 "writedesktoplink",
                 "writewebloclink",
+                "writelink",
                 "writeurllink",
                 "writesubtitles",
-                "writeautomaticsub",
+                "write_all_thumbnails",
             ]
         ):
             self.opts["outtmpl"] = {
-                "default": f"{path}/{base_name}/{self.name}",
+                "default": f"{path}/{base_name}/{self._listener.name}",
                 "thumbnail": f"{start_path}/{base_name}.%(ext)s",
             }
         else:
             self.opts["outtmpl"] = {
-                "default": f"{path}/{self.name}",
+                "default": f"{path}/{self._listener.name}",
                 "thumbnail": f"{start_path}/{base_name}.%(ext)s",
             }
 
         if qual.startswith("ba/b"):
-            self.name = f"{base_name}{self._ext}"
-            self._listener.name = self.name
+            self._listener.name = f"{base_name}{self._ext}"
 
-        is_leech = getattr(self._listener, "is_leech", False)
-        if is_leech:
+        if self.opts.get("writethumbnail"):
             self.opts["postprocessors"].append(
                 {
                     "format": "jpg",
@@ -334,26 +328,24 @@ class YoutubeDLHelper:
                     "when": "before_dl",
                 }
             )
-        if self._ext in [
-            ".mp3",
-            ".mkv",
-            ".mka",
-            ".ogg",
-            ".opus",
-            ".flac",
-            ".m4a",
-            ".mp4",
-            ".mov",
-            "m4v",
-        ]:
-            self.opts["postprocessors"].append(
-                {
-                    "already_have_thumbnail": is_leech,
-                    "key": "EmbedThumbnail",
-                }
-            )
-        elif not is_leech:
-            self.opts["writethumbnail"] = False
+            if self._ext in [
+                ".mp3",
+                ".mkv",
+                ".mka",
+                ".ogg",
+                ".opus",
+                ".flac",
+                ".m4a",
+                ".mp4",
+                ".mov",
+                ".m4v",
+            ]:
+                self.opts["postprocessors"].append(
+                    {
+                        "already_have_thumbnail": True,
+                        "key": "EmbedThumbnail",
+                    }
+                )
 
         msg, button = await stop_duplicate_check(self._listener)
         if msg:
@@ -366,7 +358,7 @@ class YoutubeDLHelper:
 
         add_to_queue, event = await check_running_tasks(self._listener)
         if add_to_queue:
-            LOGGER.info(f"Added to Queue/Download: {self.name}")
+            LOGGER.info(f"Added to Queue/Download: {self._listener.name}")
             async with task_dict_lock:
                 task_dict[self._listener.mid] = QueueStatus(
                     self._listener, self._gid, "dl"
@@ -374,30 +366,26 @@ class YoutubeDLHelper:
             await event.wait()
             if self._listener.is_cancelled:
                 return
-            LOGGER.info(f"Start Queued Download from YT_DLP: {self.name}")
+            LOGGER.info(f"Start Queued Download from YT_DLP: {self._listener.name}")
             await self._on_download_start(True)
 
         if not add_to_queue:
-            LOGGER.info(f"Download with YT_DLP: {self.name}")
+            LOGGER.info(f"Download with YT_DLP: {self._listener.name}")
 
-        await sync_to_async(self._download, link, path)
+        await sync_to_async(self._download, path)
 
     async def cancel_task(self):
-        self._is_cancelled = True
         self._listener.is_cancelled = True
-        LOGGER.info(f"Cancelling Download: {self.name}")
-        if not self._downloading:
-            await self._listener.on_download_error("Download Cancelled by User!")
+        LOGGER.info(f"Cancelling Download: {self._listener.name}")
+        await self._listener.on_download_error("Stopped by User!")
 
     def _set_options(self, options):
         if isinstance(options, str):
-            options_list = options.split("|")
-            for opt in options_list:
-                if ":" not in opt:
+            yt_opt = options.split("|")
+            for ytopt in yt_opt:
+                if ":" not in ytopt:
                     continue
-                key, value = map(str.strip, opt.split(":", 1))
-                if key == "format" and value.startswith("ba/b-"):
-                    continue
+                key, value = map(str.strip, ytopt.split(":", 1))
                 if value.startswith("^"):
                     if "." in value or value == "^inf":
                         value = float(value.split("^", 1)[1])
@@ -413,14 +401,9 @@ class YoutubeDLHelper:
                         value = literal_eval(value)
                     except Exception:
                         pass
-
-                if key == "postprocessors":
-                    if isinstance(value, list):
-                        self.opts[key].extend(tuple(value))
-                    elif isinstance(value, dict):
-                        self.opts[key].append(value)
-                else:
-                    self.opts[key] = value
+                if key == "writethumbnail" and value is True:
+                    self.keep_thumb = True
+                self.opts[key] = value
         elif isinstance(options, dict):
             for key, value in options.items():
                 if key == "postprocessors":
@@ -428,5 +411,10 @@ class YoutubeDLHelper:
                         self.opts[key].extend(tuple(value))
                     elif isinstance(value, dict):
                         self.opts[key].append(value)
+                elif key == "download_ranges":
+                    if isinstance(value, list):
+                        self.opts[key] = lambda info, ytdl: value
                 else:
+                    if key == "writethumbnail" and value is True:
+                        self.keep_thumb = True
                     self.opts[key] = value

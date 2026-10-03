@@ -224,8 +224,22 @@ async def add_handlers():
     )
     TgClient.bot.add_handler(
         MessageHandler(
+            ytdl,
+            filters=command(BotCommands.YtdlCommand, case_sensitive=True)
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
             leech,
             filters=command(BotCommands.LeechCommand, case_sensitive=True)
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            ytdl_leech,
+            filters=command(BotCommands.YtdlLeechCommand, case_sensitive=True)
             & CustomFilters.authorized,
         )
     )
