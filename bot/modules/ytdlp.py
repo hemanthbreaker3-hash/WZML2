@@ -488,7 +488,7 @@ class YtDlp(TaskListener):
         cookie_to_use = (
             get_social_cookie_file(self.user_id, self.link, self.user_dict)
             if self.is_social
-            else get_cookie_file(self.user_dict, self.user_id)
+            else get_cookie_file(self.user_dict)
         )
         LOGGER.info(
             f"Using {'social' if self.is_social else 'YouTube'} cookies file: "
@@ -549,23 +549,7 @@ class YtDlp(TaskListener):
             else:
                 result = await sync_to_async(extract_info, self.link, options)
         except Exception as e:
-            raw_error = str(e)
-            lowered_error = raw_error.lower()
-            drm_markers = (
-                "drm", "widevine", "playready", "fairplay", "encrypted media",
-                "sample-aes", "content protection", "protected content",
-                "license acquisition", "license server",
-            )
-            if any(marker in lowered_error for marker in drm_markers):
-                msg = (
-                    "This source appears to use DRM/encrypted media protection, which "
-                    "the bot cannot decrypt or bypass. Use the platform's official "
-                    "download/export option, or provide a DRM-free media URL that "
-                    "you are authorized to download. DRM-free supported links can "
-                    "still be downloaded with /sdt."
-                )
-            else:
-                msg = raw_error.replace("<", " ").replace(">", " ")
+            msg = str(e).replace("<", " ").replace(">", " ")
             await send_message(self.message, f"{self.tag} {msg}")
             await self.remove_from_same_dir()
             await delete_links(self.message)

@@ -167,9 +167,6 @@ class Mirror(TaskListener):
             "-tr": False,
             "-track": False,
             "-tm": False,
-            "-tc": False,
-            "-sync": False,
-            "-tch": False,
             "-i": 0,
             "-sp": 0,
             "link": "",
@@ -263,14 +260,8 @@ class Mirror(TaskListener):
 
 
         self.ht_flag = bool(args["-ht"] or "-ht" in self.options)
-        self.sync_planner = bool(args.get("-sync", False) or "-sync" in self.options)
-        self.track_channel_71 = bool(args.get("-tch", False) or "-tch" in self.options)
         self.track_manager = bool(
-            self.sync_planner
-            or self.track_channel_71
-            or args.get("-tc", False)
-            or any(f == "-tc" for f in self.options)
-            or args["-trackmanager"]
+            args["-trackmanager"]
             or args["-tr"]
             or args["-track"]
             or args["-tm"]
@@ -279,8 +270,6 @@ class Mirror(TaskListener):
                 for f in ("-trackmanager", "-tr", "-track", "-tm")
             )
         )
-
-        self.track_changer = bool(args.get("-tc", False) or "-tc" in self.options)
 
         from ..helper.ext_utils.task_manager import get_task_key
         task_source = self.link or (self.message.reply_to_message.text if self.message.reply_to_message and self.message.reply_to_message.text else "") or self.name

@@ -233,9 +233,7 @@ Apply custom title, artist, audio and subtitle language tags.
 
 track_manager_help = """<b>Audio & Subtitle Track Manager:</b> -tm
 
-<code>/cmd link -tm</code> — select/reorder tracks\n<code>/cmd link -tc</code> — edit audio/subtitle title and language
-<code>/cmd link -sync</code> — open the track sync planner before upload
-<code>/cmd link -tch</code> — convert audio to AAC 7.1 where supported
+<code>/cmd link -tm</code>
 <code>/cmd link -tr</code>
 <code>/cmd link -track</code>
 
@@ -318,8 +316,6 @@ def get_bot_commands():
         "Ytdl": "[link] Mirror YouTube and supported websites",
         "Socialdl": "[link] Download social-media and other yt-dlp supported media",
         "CookieSettings": "Manage per-platform social-media cookies",
-        "Dapi": "Resolve a link using your saved download API mapping (private chat only)",
-        "Dlapi": "Manage your personal domain-to-download-API mappings (private chat only)",
         "UpHoster": "[link/file] Upload to DDL hosters",
         "Leech": "[link/file] Leech task to Telegram",
         "QbLeech": "[magnet/torrent] Leech using qBittorrent",

@@ -44,8 +44,7 @@ async def gen_mediainfo(message, link=None, media=None, mmsg=None):
                         async for chunk in response.content.iter_chunked(4 * 1024 * 1024):
                             await f.write(chunk)
         elif media:
-            safe_name = re_sub(r"[^A-Za-z0-9._-]+", "_", media.file_name or "media")[:180] or "media"
-            des_path = ospath.join(path, safe_name)
+            des_path = ospath.join(path, media.file_name)
             file_size = media.file_size
             if file_size <= 50000000:
                 await mmsg.download(ospath.join(getcwd(), des_path))
@@ -73,12 +72,11 @@ async def gen_mediainfo(message, link=None, media=None, mmsg=None):
     try:
         from datetime import datetime
         import random
-        title = f"MediaInfo-X-{datetime.now().strftime('%d-%m')}-{random.randint(10000, 99999)}"
+        title = f"MediaInfo-X-{datetime.now().strftime("%d-%m")}-{random.randint(10000, 99999)}"
         page = await telegraph.create_page(title=title, content=tc)
         path = page.get("path", "") if isinstance(page, dict) else ""
         if path:
-            clean_path = path.lstrip("/")
-            page_url = path if path.startswith("http") else f"https://graph.org/{clean_path}"
+            page_url = path if path.startswith("http") else f"https://graph.org/{path.lstrip("/")}"
     except Exception as e:
         LOGGER.warning(f"Graph.org MediaInfo page creation failed: {e}")
 
