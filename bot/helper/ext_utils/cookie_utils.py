@@ -211,6 +211,10 @@ def get_social_cookie_file(user_id, url, user_dict=None):
     if platform != "youtube":
         candidates.append(social_cookie_path(user_id, platform))
     candidates.append(social_cookie_path(user_id, "generic"))
+    # The standard user settings uploader stores YouTube cookies here. Some
+    # older user records do not have USER_COOKIE_FILE persisted, so check the
+    # canonical path directly before falling back to global cookies.
+    candidates.append(f"cookies/{user_id}/cookies.txt")
     legacy = user_dict.get("USER_COOKIE_FILE", "")
     if legacy:
         candidates.append(legacy)

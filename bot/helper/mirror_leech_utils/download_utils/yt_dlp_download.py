@@ -33,7 +33,10 @@ LOGGER = getLogger(__name__)
 # YT_DLP_OPTIONS) is applied later and overrides this default.
 YT_EXTRACTOR_ARGS = {
     "youtube": {
-        "player_client": ["default", "web_safari", "web_embedded", "-tv_downgraded"]
+        # Keep modern web clients available. `mweb` is important for current
+        # YouTube deployments; EJS/Deno solves JS challenges but does not replace
+        # account cookies or a required PO-token provider.
+        "player_client": ["default", "mweb", "web_safari", "web_embedded", "-tv_downgraded"]
     }
 }
 # Formats are dropped (-> "Requested format is not available") when YouTube's
@@ -78,7 +81,7 @@ YT_LINK_RE = r"(?:youtube\.com|youtu\.be|youtube-nocookie\.com)"
 
 # Tried in order until one returns REAL (non-storyboard) formats.
 YT_COOKIELESS_ATTEMPTS = (
-    ("web clients, no cookies", YT_EXTRACTOR_ARGS, False),
+    ("default/mweb/web_safari clients, no cookies", YT_EXTRACTOR_ARGS, False),
     ("web_embedded client, no cookies", {"youtube": {"player_client": ["web_embedded"]}}, False),
     ("android_vr client, no cookies", {"youtube": {"player_client": ["android_vr"]}}, False),
 )
@@ -204,16 +207,35 @@ def probe_youtube(link, options):
     raise YtProbeError(msg)
 
 
-def get_cookie_file(user_dict=None):
+def get_cookie_file(user_dict=None, user_id=None):
+    """Resolve configured YouTube cookies, including the normal per-user path.
+
+    Older user records can lack USER_COOKIE_FILE even though cookie settings
+    saved cookies/<user_id>/cookies.txt. Check that path as well so the bot does
+    not accidentally probe YouTube anonymously and report only storyboards.
+    """
     user_dict = user_dict or {}
-    if not user_dict.get("USE_DEFAULT_COOKIE", False):
+    use_default = bool(user_dict.get("USE_DEFAULT_COOKIE", False))
+    candidates = []
+    if use_default:
+        candidates.append("cookies.txt")
+    else:
         usr_cookie = user_dict.get("USER_COOKIE_FILE", "")
-        if usr_cookie and ospath.exists(usr_cookie):
-            ensure_cookie_file(usr_cookie)
-            return usr_cookie
-    if ospath.exists("cookies.txt"):
-        ensure_cookie_file("cookies.txt")
-        return "cookies.txt"
+        if usr_cookie:
+            candidates.append(usr_cookie)
+        if user_id is not None:
+            candidates.append(f"cookies/{user_id}/cookies.txt")
+        candidates.append("cookies.txt")
+    seen = set()
+    for candidate in candidates:
+        if candidate and candidate not in seen and ospath.isfile(candidate):
+            seen.add(candidate)
+            report = ensure_cookie_file(candidate)
+            if report.get("error"):
+                LOGGER.warning(f"Configured YouTube cookie file is not usable ({candidate}): {report['error']}")
+                continue
+            LOGGER.info(f"Resolved YouTube cookie file: {candidate} | default={use_default}")
+            return candidate
     return None
 
 
@@ -281,7 +303,7 @@ class YoutubeDLHelper:
                 "extractor": lambda n: 3,
             },
         }
-        cookie_to_use = get_cookie_file(self._listener.user_dict)
+        cookie_to_use = get_cookie_file(self._listener.user_dict, self._listener.user_id)
         yt_cfg = getattr(self._listener, "yt_cfg", None)
         if yt_cfg:
             self.opts["extractor_args"] = yt_cfg["extractor_args"]

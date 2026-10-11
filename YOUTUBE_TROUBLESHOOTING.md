@@ -29,3 +29,20 @@ The downloader now tries a web-client fallback, a `web_embedded` fallback, and `
 ## Systemd stop timeout
 
 The deployment unit now uses `SIGTERM`, `KillMode=mixed`, and `TimeoutStopSec=30` rather than sending `SIGINT` to the Python event loop. `start.sh` uses `exec`, so systemd manages the Python process directly. After redeploy, inspect the service with `systemctl cat cantarellabots_bot.service` and `journalctl -u cantarellabots_bot.service -n 100 --no-pager`.
+
+
+### HTR-X cookie lookup and current YouTube clients
+
+The downloader now checks the user's configured `USER_COOKIE_FILE`, then the
+standard per-user `cookies/<user_id>/cookies.txt` path (for older saved user
+records), and finally the global `cookies.txt` fallback. If a cookie file is
+found, YouTube probing keeps that cookie file enabled for each client attempt;
+it does not silently retry anonymously. The default client set also includes
+`mweb` alongside `web_safari` and `web_embedded`.
+
+Deno and `yt-dlp-ejs` solve JavaScript challenges; they do not renew invalid
+login cookies or automatically provide every required YouTube PO Token. If the
+log still says `LOGIN_REQUIRED`, upload a fresh Netscape cookies.txt exported
+from your own signed-in session. If valid cookies still return no formats, check
+that video is available to that account and consult yt-dlp's current PO Token
+guide: https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide.
