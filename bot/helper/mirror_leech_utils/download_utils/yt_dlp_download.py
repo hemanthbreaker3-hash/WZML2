@@ -77,11 +77,23 @@ YT_JS_OPTS = get_yt_js_options()
 YT_LINK_RE = r"(?:youtube\.com|youtu\.be|youtube-nocookie\.com)"
 
 # Tried in order until one returns REAL (non-storyboard) formats.
-YT_ATTEMPTS = (
-    ("default clients + cookies", YT_EXTRACTOR_ARGS, True),
-    ("default clients, no cookies", YT_EXTRACTOR_ARGS, False),
+YT_COOKIELESS_ATTEMPTS = (
+    ("web clients, no cookies", YT_EXTRACTOR_ARGS, False),
+    ("web_embedded client, no cookies", {"youtube": {"player_client": ["web_embedded"]}}, False),
     ("android_vr client, no cookies", {"youtube": {"player_client": ["android_vr"]}}, False),
 )
+
+# A configured cookie file is an explicit user choice. Never silently strip it
+# during probing: doing so can hide a cookie configuration error and cause the
+# user's authenticated request to be retried anonymously.
+def get_yt_attempts(options):
+    if options.get("cookiefile"):
+        return (
+            ("web clients + configured cookies", YT_EXTRACTOR_ARGS, True),
+            ("web_embedded client + configured cookies", {"youtube": {"player_client": ["web_embedded"]}}, True),
+            ("android_vr client + configured cookies", {"youtube": {"player_client": ["android_vr"]}}, True),
+        )
+    return YT_COOKIELESS_ATTEMPTS
 
 _KEY_LINE = (
     r"warning|error|challenge|js runtime|jsc|sabr|po token|cookies|sign in|"
@@ -130,10 +142,8 @@ def real_formats(info):
 def probe_youtube(link, options):
     """Extract info trying several client/cookie setups. Returns (info, cfg, lines)."""
     tried, collected = [], []
-    for label, eargs, use_cookies in YT_ATTEMPTS:
-        if not use_cookies and not options.get("cookiefile") and tried:
-            if eargs is YT_EXTRACTOR_ARGS:
-                continue  # identical to attempt 1 when no cookies are in use
+    attempts = get_yt_attempts(options)
+    for label, eargs, use_cookies in attempts:
         opts = {k: v for k, v in options.items() if k != "format"}
         opts["extractor_args"] = eargs
         if not use_cookies:
@@ -176,11 +186,21 @@ def probe_youtube(link, options):
     )
     if options.get("cookiefile"):
         msg += f"\n\nCookie file: {describe_cookie_report(ensure_cookie_file(options['cookiefile']))}"
-    msg += (
-        "\n\nUsual causes: cookies expired/rotated (re-export from a private window), "
-        "JS runtime/solver not working (deno/node + matching yt-dlp-ejs), or YouTube forcing "
-        "SABR for this server IP (try another IP/proxy)."
-    )
+    all_output = "\n".join(collected).lower()
+    if "cookies are no longer valid" in all_output or "login_required" in all_output:
+        msg += (
+            "\n\nFIX: YouTube rejected the current login session (LOGIN_REQUIRED / invalid cookies). "
+            "Re-export a fresh Netscape cookies.txt while signed in to YouTube, then upload it again "
+            "through the bot's cookie settings. The bot cannot repair or refresh expired cookies. "
+            "Do not share the cookie file; it grants access to your account."
+        )
+    else:
+        msg += (
+            "\n\nTroubleshooting: confirm the video is public and available to this account, "
+            "update yt-dlp and yt-dlp-ejs, and test a fresh authorized cookie file. YouTube may "
+            "also withhold streams from datacenter IPs or require a PO token for a player client. "
+            "Deno being detected does not guarantee YouTube will return downloadable formats."
+        )
     raise YtProbeError(msg)
 
 
@@ -387,6 +407,18 @@ class YoutubeDLHelper:
         async_to_sync(send_message, self._listener.message, msg)
 
     def _extract_meta_data(self):
+        # Probe YouTube before normal metadata extraction so we can fail early
+        # with useful diagnostics and retain the exact client/cookie config
+        # that produced downloadable formats. Configured cookies are mandatory.
+        if is_youtube_link(getattr(self._listener, "link", "")):
+            info, yt_cfg, _lines = probe_youtube(self._listener.link, self.opts)
+            self.opts["extractor_args"] = yt_cfg["extractor_args"]
+            if yt_cfg["use_cookies"]:
+                # Keep the explicitly configured Netscape cookie file intact.
+                if self.opts.get("cookiefile"):
+                    ensure_cookie_file(self.opts["cookiefile"])
+            else:
+                self.opts.pop("cookiefile", None)
         qual = self.opts.get("format") or "bv*+ba/b"
         candidates = [qual]
         if not qual.startswith("ba/b"):

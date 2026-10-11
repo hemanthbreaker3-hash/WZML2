@@ -109,7 +109,9 @@ ExecStart=/bin/bash $APP_DIR/start.sh
 Restart=on-failure
 RestartSec=10
 TimeoutStartSec=180
-KillSignal=SIGINT
+TimeoutStopSec=30
+KillSignal=SIGTERM
+KillMode=mixed
 Environment="PATH=$APP_DIR/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="PYTHONUNBUFFERED=1"
 Environment="PYTHONPATH=$APP_DIR"\nEnvironment="DENO_INSTALL=/usr/local"
