@@ -72,6 +72,7 @@ class TelegramUploader:
         self._sent_msg = None
         self._user_session = self._listener.transmission_mode in ("user", "both")
         self._user_client = None
+        self._user_bot_clients = {}
         self._hu: HypertgUpload | None = None
         self._error = ""
         self._upload_seq = []
@@ -141,6 +142,7 @@ class TelegramUploader:
         if user_tokens and isinstance(user_tokens, list):
             ubots = await TgClient.get_user_bots(self._listener.user_id, user_tokens)
             if ubots:
+                self._user_bot_clients = ubots
                 self._hu_clients = ubots
                 self._listener.client = list(ubots.values())[0]
 
@@ -433,146 +435,114 @@ class TelegramUploader:
                     LOGGER.error(f"Failed To Send in BotPM:\n{err_msg}")
 
     async def _sequence_copies(self, src_chat):
+        """Deliver each uploaded Telegram message once to its intended targets.
+
+        A preset-specific FFmpeg dump replaces the generic leech dump for that
+        task. Named LEECH_DUMP_CHATS entries are choices/mappings, not a list of
+        destinations to broadcast every file to.
+        """
         from ...ext_utils.bot_utils import parse_dest
+
         destinations = []
+        seen_chats = set()
 
-        # AUTHORIZED_CHATS is an access-control list, never an implicit upload
-        # destination. A chat is allowed here only when it is explicitly a
-        # configured dump destination; otherwise uploads fall back to the user DM.
-        raw_auth = str(getattr(Config, "AUTHORIZED_CHATS", "") or "")
-        auth_ids = set()
-        for raw in raw_auth.split():
-            base = raw.split("|", 1)[0].strip()
-            if base.lstrip("-").isdigit():
-                auth_ids.add(int(base))
-
-        allowed_dump_ids = set()
-        for raw_dump in [
-            self._listener.user_dict.get("LEECH_DUMP_CHAT"),
-            getattr(Config, "LEECH_LOG_CHAT", ""),
-        ]:
-            if raw_dump:
-                try:
-                    d_chat, _ = parse_dest(raw_dump) if not isinstance(raw_dump, int) else (raw_dump, None)
-                    if isinstance(d_chat, int):
-                        allowed_dump_ids.add(d_chat)
-                except Exception:
-                    pass
-        for raw_dump in (Config.LEECH_DUMP_CHATS or {}).values():
-            if raw_dump:
-                try:
-                    d_chat, _ = parse_dest(raw_dump) if not isinstance(raw_dump, int) else (raw_dump, None)
-                    if isinstance(d_chat, int):
-                        allowed_dump_ids.add(d_chat)
-                except Exception:
-                    pass
-
-        def add_dest(c_chat, c_thread):
-            if c_chat is None:
+        def add_dest(raw_dest, fallback_thread=None):
+            if not raw_dest:
                 return
-            if isinstance(c_chat, str) and c_chat.lstrip("-").isdigit():
-                c_chat = int(c_chat)
             try:
-                numeric_chat = int(c_chat) if str(c_chat).lstrip("-").isdigit() else None
-            except (TypeError, ValueError):
-                numeric_chat = None
-            if numeric_chat in auth_ids and numeric_chat not in allowed_dump_ids:
-                LOGGER.info("Skipping AUTHORIZED_CHATS upload target %s", numeric_chat)
-                return
-            if (c_chat, c_thread) not in destinations:
-                destinations.append((c_chat, c_thread))
+                if isinstance(raw_dest, int):
+                    chat_id, thread_id = raw_dest, fallback_thread
+                else:
+                    chat_id, thread_id = parse_dest(raw_dest)
+                    if thread_id is None:
+                        thread_id = fallback_thread
+                if isinstance(chat_id, str) and chat_id.lstrip("-").isdigit():
+                    chat_id = int(chat_id)
+                if chat_id is None:
+                    return
+                # One copy per chat. A second configured alias/thread for the
+                # same chat must not cause duplicate Telegram uploads.
+                key = str(chat_id)
+                if key in seen_chats:
+                    return
+                seen_chats.add(key)
+                destinations.append((chat_id, thread_id))
+            except Exception as err:
+                LOGGER.warning("Ignoring invalid Telegram dump destination %r: %s", raw_dest, err)
 
-        has_preset = getattr(self._listener, "has_preset_dump", False) and bool(getattr(self._listener, "key_dump_dests", None))
+        has_preset_dump = bool(
+            getattr(self._listener, "has_preset_dump", False)
+            and getattr(self._listener, "key_dump_dests", None)
+        )
 
-        if has_preset:
-            for k_dest in self._listener.key_dump_dests:
-                if k_dest:
-                    k_chat, k_thread = parse_dest(k_dest) if not isinstance(k_dest, int) else (k_dest, None)
-                    add_dest(k_chat, k_thread)
+        if has_preset_dump:
+            # A configured preset gets only its own preset dump(s), not the
+            # user's generic LEECH_DUMP_CHAT or the global LEECH_LOG_CHAT.
+            for raw_dest in self._listener.key_dump_dests:
+                add_dest(raw_dest)
         else:
-            leech_dest_found = False
-            if self._listener.leech_dest:
-                d_chat, d_thread = parse_dest(self._listener.leech_dest) if not isinstance(self._listener.leech_dest, int) else (self._listener.leech_dest, self._listener.leech_thread_id)
-                add_dest(d_chat, d_thread)
-                leech_dest_found = True
-
-            if self._listener.up_dest:
-                g_chat, g_thread = parse_dest(self._listener.up_dest) if not isinstance(self._listener.up_dest, int) else (self._listener.up_dest, self._listener.chat_thread_id)
-                add_dest(g_chat, g_thread)
-                leech_dest_found = True
-
+            # Generic tasks: user's own destination overrides the global main
+            # dump; if neither exists, the requester DM is the dump destination.
             user_dump = self._listener.user_dict.get("LEECH_DUMP_CHAT")
+            main_dump = getattr(Config, "LEECH_LOG_CHAT", "")
             if user_dump:
-                u_chat, u_thread = parse_dest(user_dump) if not isinstance(user_dump, int) else (user_dump, None)
-                add_dest(u_chat, u_thread)
-                leech_dest_found = True
+                add_dest(user_dump)
+            elif main_dump:
+                add_dest(main_dump)
+            else:
+                add_dest(self._listener.user_id)
 
-            if not leech_dest_found:
-                add_dest(self._listener.user_id, None)
+            # Respect an explicitly selected task destination, but never add
+            # every named LEECH_DUMP_CHATS value as that caused duplicate copies.
+            if self._listener.up_dest:
+                add_dest(self._listener.up_dest, self._listener.chat_thread_id)
 
-        user_dump = self._listener.user_dict.get("LEECH_DUMP_CHAT")
-        if user_dump:
-            u_chat, u_thread = parse_dest(user_dump) if not isinstance(user_dump, int) else (user_dump, None)
-            add_dest(u_chat, u_thread)
-
-        if Config.LEECH_LOG_CHAT:
-            l_chat, l_thread = parse_dest(Config.LEECH_LOG_CHAT) if not isinstance(Config.LEECH_LOG_CHAT, int) else (Config.LEECH_LOG_CHAT, None)
-            add_dest(l_chat, l_thread)
-
-        if Config.LEECH_DUMP_CHATS and isinstance(Config.LEECH_DUMP_CHATS, dict):
-            for d_val in Config.LEECH_DUMP_CHATS.values():
-                if d_val:
-                    c_chat, c_thread = parse_dest(d_val) if not isinstance(d_val, int) else (d_val, None)
-                    add_dest(c_chat, c_thread)
+        # The requester should also receive the result in DM, regardless of
+        # whether a dump was configured. Prefer their /addbot bot when present;
+        # if it cannot access the source message or the user has not started it,
+        # fall back to the main bot.
+        user_dm_client = next(iter(self._user_bot_clients.values()), None)
+        if not user_dm_client:
+            user_dm_client = TgClient.bot
+        add_dest(self._listener.user_id)
 
         for entry in self._upload_seq:
-            if entry is None:
+            if not entry:
                 continue
             copy_from_chat = entry["chat_id"]
             copy_from_msg = entry["msg_id"]
-            copied_to_user_dm = False
-
-            # A blocked/invalid configured destination must never prevent delivery
-            # to the requesting user. AUTHORIZED_CHATS is access control only;
-            # only explicitly configured dump chats are eligible destinations.
             for dest_chat, thread_id in destinations:
-                if dest_chat == copy_from_chat:
+                if str(dest_chat) == str(copy_from_chat):
                     continue
-                try:
-                    kw = {}
-                    if thread_id:
-                        kw["message_thread_id"] = thread_id
-                    await _call_with_flood_retry(
-                        TgClient.bot.copy_message,
-                        chat_id=dest_chat,
-                        from_chat_id=copy_from_chat,
-                        message_id=copy_from_msg,
-                        **kw
-                    )
-                    if str(dest_chat) == str(self._listener.user_id):
-                        copied_to_user_dm = True
-                except Exception as err:
-                    if not self._listener.is_cancelled:
-                        LOGGER.error(
-                            f"Failed to copy output message to dump destination {dest_chat}: {err}"
+                kw = {"message_thread_id": thread_id} if thread_id else {}
+                # Use /addbot client for the DM only; configured dump chats are
+                # sent through the main bot, which is normally the dump admin.
+                is_user_dm = str(dest_chat) == str(self._listener.user_id)
+                clients = [user_dm_client, TgClient.bot] if is_user_dm and user_dm_client is not TgClient.bot else [TgClient.bot]
+                delivered = False
+                for client in clients:
+                    if client is None:
+                        continue
+                    try:
+                        await _call_with_flood_retry(
+                            client.copy_message,
+                            chat_id=dest_chat,
+                            from_chat_id=copy_from_chat,
+                            message_id=copy_from_msg,
+                            **kw,
                         )
-
-            # Always provide a DM fallback when no dump destination worked.
-            if not copied_to_user_dm and not self._listener.is_cancelled:
-                try:
-                    await _call_with_flood_retry(
-                        TgClient.bot.copy_message,
-                        chat_id=self._listener.user_id,
-                        from_chat_id=copy_from_chat,
-                        message_id=copy_from_msg,
-                    )
-                except Exception as err:
-                    LOGGER.error(
-                        "Could not deliver output to user DM %s. "
-                        "The user may need to start the bot: %s",
-                        self._listener.user_id,
-                        err,
-                    )
+                        delivered = True
+                        break
+                    except Exception as err:
+                        if not self._listener.is_cancelled:
+                            LOGGER.warning(
+                                "Copy failed via %s to %s: %s",
+                                getattr(getattr(client, "me", None), "username", "bot"),
+                                dest_chat,
+                                err,
+                            )
+                if not delivered and not self._listener.is_cancelled:
+                    LOGGER.error("Unable to deliver Telegram output to destination %s", dest_chat)
 
     async def _upload_file_task(self, file_, f_path, dirpath, user_session, seq_idx):
         up_path = None

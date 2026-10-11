@@ -1,23 +1,28 @@
 name: imdb
-version: "1.0.0"
-author: WZML-X
-description: Search IMDB for titles and post a formatted card
+version: "1.0.1"
+author: HTR-X / WZML-X
+description: Search IMDb and TMDb for movies and TV titles
 license: MIT
 repository: https://github.com/SilentDemonSD/WZML-X
 tags: [media, lookup]
-min_bot_version: "3.1.9"
 entry: imdb.py
 python_dependencies:
   - imdbio
   - pycountry
+  - niquests
 commands:
   - name: imdb
     handler: imdb_search
-    description: "[query] or ttxxxxxx Get IMDB info"
+    description: "[query] or ttxxxxxx Get IMDb info"
     usage: "/imdb <query|ttxxxxxxx>"
-    access: authorized
+    access: authorized_uset
+  - name: tmdb
+    handler: tmdb_search
+    description: "[query] Search TMDb for movie or TV information"
+    usage: "/tmdb <title>"
+    access: authorized_uset
 callbacks:
   - pattern: "^imdb"
     handler: imdb_callback
-    description: IMDB result navigation
-    access: authorized
+    description: IMDb result navigation
+    access: authorized_uset
